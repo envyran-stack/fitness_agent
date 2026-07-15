@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import threading
 import uuid
 from datetime import date, datetime
 from pathlib import Path
@@ -11,19 +13,51 @@ from typing import Any
 from body_metrics import DEFAULT_BODY_METRIC_FIELDS, RESERVED_BODY_KEYS, slugify_metric_key
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
-DATA_FILE = DATA_DIR / "fitness.json"
+USERS_DIR = DATA_DIR / "users"
+DATA_FILE = DATA_DIR / "fitness.json"  # 사용자 미지정 시(로컬 단독 실행 등) 사용하는 기본 파일
 
 DEFAULT_DATA: dict[str, Any] = {
     "body_metric_fields": [dict(field) for field in DEFAULT_BODY_METRIC_FIELDS],
     "body_metrics": [],
     "workouts": [],
+    "events": [],
 }
+
+# 여러 사람이 같은 서버에 동시 접속해도 기록이 섞이지 않도록, "현재 사용자"를
+# 스레드 로컬로 관리한다. Streamlit은 세션(브라우저 탭)마다 별도 스레드에서
+# 스크립트를 실행하므로, 전역 변수 대신 스레드 로컬을 쓰면 안전하게 분리된다.
+_user_context = threading.local()
+
+_USERNAME_RE = re.compile(r"[^0-9A-Za-z가-힣_\-]+")
+
+
+def sanitize_username(raw: str) -> str:
+    """닉네임을 안전한 파일명으로 변환한다 (경로 조작·특수문자 방지)."""
+    cleaned = _USERNAME_RE.sub("", (raw or "").strip())[:30]
+    return cleaned
+
+
+def set_current_user(username: str | None) -> None:
+    """이번 요청(세션)에서 사용할 사용자를 지정한다. None/빈 값이면 기본 공용 파일을 쓴다."""
+    _user_context.username = sanitize_username(username or "") or None
+
+
+def get_current_user() -> str | None:
+    return getattr(_user_context, "username", None)
+
+
+def _current_data_file() -> Path:
+    username = get_current_user()
+    if not username:
+        return DATA_FILE
+    return USERS_DIR / f"{username}.json"
 
 
 def _ensure_data_file() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if not DATA_FILE.exists():
-        DATA_FILE.write_text(
+    data_file = _current_data_file()
+    data_file.parent.mkdir(parents=True, exist_ok=True)
+    if not data_file.exists():
+        data_file.write_text(
             json.dumps(DEFAULT_DATA, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -35,7 +69,7 @@ def _new_id() -> str:
 
 def _ensure_record_ids(data: dict[str, Any]) -> bool:
     changed = False
-    for key in ("body_metrics", "workouts"):
+    for key in ("body_metrics", "workouts", "events"):
         for entry in data.get(key, []):
             if not entry.get("id"):
                 entry["id"] = _new_id()
@@ -52,9 +86,12 @@ def _ensure_body_metric_fields(data: dict[str, Any]) -> bool:
 
 def load_data() -> dict[str, Any]:
     _ensure_data_file()
-    with DATA_FILE.open(encoding="utf-8") as f:
+    with _current_data_file().open(encoding="utf-8") as f:
         data = json.load(f)
     changed = _ensure_body_metric_fields(data)
+    if "events" not in data:
+        data["events"] = []
+        changed = True
     if _ensure_record_ids(data):
         changed = True
     if changed:
@@ -130,7 +167,7 @@ def _sanitize_body_metrics(metrics: dict[str, float], fields: list[dict[str, Any
 
 def save_data(data: dict[str, Any]) -> None:
     _ensure_data_file()
-    with DATA_FILE.open("w", encoding="utf-8") as f:
+    with _current_data_file().open("w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
@@ -263,6 +300,83 @@ def delete_workout(record_id: str) -> bool:
     return True
 
 
+def add_event(
+    title: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    note: str = "",
+) -> dict[str, Any]:
+    title = title.strip()
+    if not title:
+        raise ValueError("이벤트 제목을 입력해 주세요.")
+
+    data = load_data()
+    start = parse_date(start_date)
+    end = parse_date(end_date) if end_date else start
+    if end < start:
+        start, end = end, start
+
+    entry = {
+        "id": _new_id(),
+        "title": title,
+        "start_date": start,
+        "end_date": end,
+        "note": note.strip(),
+    }
+    data.setdefault("events", []).append(entry)
+    data["events"].sort(key=lambda x: x["start_date"])
+    save_data(data)
+    return entry
+
+
+def update_event(
+    record_id: str,
+    title: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    note: str = "",
+) -> dict[str, Any] | None:
+    data = load_data()
+    events = data.setdefault("events", [])
+    idx = _find_index(events, record_id)
+    if idx is None:
+        return None
+
+    title = title.strip()
+    if not title:
+        raise ValueError("이벤트 제목을 입력해 주세요.")
+
+    entry = events[idx]
+    start = parse_date(start_date) if start_date else entry["start_date"]
+    end = parse_date(end_date) if end_date else start
+    if end < start:
+        start, end = end, start
+
+    entry["title"] = title
+    entry["start_date"] = start
+    entry["end_date"] = end
+    entry["note"] = note.strip()
+    events.sort(key=lambda x: x["start_date"])
+    save_data(data)
+    return entry
+
+
+def delete_event(record_id: str) -> bool:
+    data = load_data()
+    events = data.setdefault("events", [])
+    idx = _find_index(events, record_id)
+    if idx is None:
+        return False
+    events.pop(idx)
+    save_data(data)
+    return True
+
+
+def get_events() -> list[dict[str, Any]]:
+    data = load_data()
+    return list(data.get("events", []))
+
+
 def get_records_within_days(days: int = 30) -> dict[str, list]:
     return get_records_filtered(days=days)
 
@@ -299,6 +413,13 @@ def get_records_filtered(
         def _within(entry: dict) -> bool:
             entry_dt = _entry_date(entry)
             return entry_dt is not None and entry_dt.toordinal() >= cutoff
+
+        def _event_overlaps(entry: dict) -> bool:
+            try:
+                ev_end = date.fromisoformat(entry.get("end_date") or entry["start_date"])
+            except (KeyError, ValueError):
+                return False
+            return ev_end.toordinal() >= cutoff
     else:
 
         def _within(entry: dict) -> bool:
@@ -311,7 +432,20 @@ def get_records_filtered(
                 return False
             return True
 
+        def _event_overlaps(entry: dict) -> bool:
+            try:
+                ev_start = date.fromisoformat(entry["start_date"])
+                ev_end = date.fromisoformat(entry.get("end_date") or entry["start_date"])
+            except (KeyError, ValueError):
+                return False
+            if start and ev_end < start:
+                return False
+            if end and ev_start > end:
+                return False
+            return True
+
     return {
         "body_metrics": [e for e in data["body_metrics"] if _within(e)],
         "workouts": [e for e in data["workouts"] if _within(e)],
+        "events": [e for e in data.get("events", []) if _event_overlaps(e)],
     }

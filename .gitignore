@@ -86,3 +86,6 @@ Desktop.ini
 *.swo
 
 data/
+
+# Streamlit Cloud 시크릿 (로컬 테스트용, 절대 커밋하지 않음)
+.streamlit/secrets.toml

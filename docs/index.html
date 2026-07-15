@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Fitness Agent</title>
+
+  <!-- PWA 매니페스트 (홈 화면에 추가 가능하게 함) -->
+  <link rel="manifest" href="./manifest.json" />
+  <meta name="theme-color" content="#0e1117" />
+
+  <!-- iOS(Safari) 홈 화면 추가 대응 -->
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Fitness Agent" />
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #0e1117;
+      overscroll-behavior: none;
+    }
+    #app-frame {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: #0e1117;
+    }
+    #offline-banner {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 10;
+      background: #ff4b4b;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 0.85rem;
+      text-align: center;
+      padding: 8px 12px;
+      padding-top: calc(8px + env(safe-area-inset-top));
+      display: none;
+    }
+    #offline-banner.show {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div id="offline-banner">📶 인터넷 연결이 끊겼습니다. Fitness Agent는 온라인에서만 동작해요.</div>
+
+  <!--
+    ⚠️ 배포 후 꼭 수정하세요:
+    Streamlit Community Cloud에 앱을 배포하면 https://xxxx.streamlit.app 형태의 주소가 생깁니다.
+    아래 STREAMLIT_APP_URL 값을 그 주소로 바꿔주세요.
+    (?embed=true 를 붙이면 Streamlit 상단 메뉴바/하단 "Made with Streamlit" 배지가 숨겨져 더 앱처럼 보입니다.)
+  -->
+  <script>
+    const STREAMLIT_APP_URL = "https://YOUR-APP-NAME.streamlit.app";
+    const iframeSrc = STREAMLIT_APP_URL + "?embed=true&embed_options=show_toolbar%3Dfalse";
+
+    const frame = document.createElement("iframe");
+    frame.id = "app-frame";
+    frame.src = iframeSrc;
+    frame.setAttribute("allow", "clipboard-write");
+    document.body.appendChild(frame);
+
+    function updateOnlineStatus() {
+      document.getElementById("offline-banner").classList.toggle("show", !navigator.onLine);
+    }
+    window.addEventListener("online", updateOnlineStatus);
+    window.addEventListener("offline", updateOnlineStatus);
+    updateOnlineStatus();
+
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch(() => {
+          // 서비스 워커 등록에 실패해도 iframe 앱 자체는 정상 동작하므로 무시한다.
+        });
+      });
+    }
+  </script>
+</body>
+</html>
