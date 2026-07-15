@@ -1,0 +1,44 @@
+# Python 가상환경
+.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+
+# 환경 변수 / 시크릿 (.env 관련 전부)
+.env
+.env.*
+*.env
+.env.local
+.env.development
+.env.production
+.env.test
+.env.staging
+
+# Environment variables
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.env
+
+*.pt
+*.zip
+*.db
+*.pdf
+*/chroma_regulations/*
+*/chroma_store/*
+
+*/__pycache__/*
+
+*/data/*
+
+*.csv
+*/models/*
+
+*/16.3 slack API 활용하기.ipynb
