@@ -42,3 +42,47 @@ __pycache__/
 */models/*
 
 */16.3 slack API 활용하기.ipynb
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# VS Code settings
+.vscode/
+
+# Logs
+*.log
+
+# Test outputs
+htmlcov/
+.coverage
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pytest
+.pytest_cache/
+
+# Bandit security reports
+bandit.json
+
+# Local configuration files
+*.local
+
+# System files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# backup files
+*~
+*.bak
+*.swp
+*.swo
+
+data/
