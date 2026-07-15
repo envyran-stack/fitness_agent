@@ -36,16 +36,21 @@ from storage import (
     delete_event,
     delete_workout,
     get_body_metric_fields,
+    create_profile,
     get_events,
     get_records_filtered,
+    list_profiles,
     load_data,
     parse_date,
+    profile_has_pin,
     remove_body_metric_field,
     sanitize_username,
     set_current_user,
+    set_profile_pin,
     update_body_metric,
     update_event,
     update_workout,
+    verify_profile_pin,
 )
 from tools import analyze_fitness_trends, save_workout
 from smtp_config import default_report_recipient, smtp_config_status, test_smtp_connection
@@ -156,8 +161,10 @@ def check_runtime() -> None:
             f"Python {ver[0]}.{ver[1]} 미지원. `conda activate day15` 후 `./run_web.sh` 실행."
         )
         st.stop()
-    if not Path(__file__).resolve().parent.joinpath(".env").exists():
-        st.warning("fitness_agent/.env 없음 — API 키·SMTP 설정 필요.")
+    # 로컬은 .env, 배포(Streamlit Cloud)는 Secrets를 쓰므로, 파일 존재 여부 대신
+    # 실제로 키가 로드됐는지(둘 중 하나라도 설정됐는지)로 판단한다.
+    if not os.getenv("OPENAI_API_KEY"):
+        st.warning("OPENAI_API_KEY 미설정 — 로컬은 `.env`, 배포 환경은 Streamlit Cloud **Secrets**에 설정해 주세요.")
 
 
 @st.cache_resource
@@ -172,36 +179,125 @@ def init_session_state() -> None:
         st.session_state.chat_history = []
 
 
-def ensure_current_user() -> str:
-    """여러 사람이 같은 배포본을 함께 쓸 때 기록이 섞이지 않도록 닉네임을 확인한다.
+def _profile_login(name: str) -> None:
+    """PIN 확인이 끝난 프로필로 로그인 처리하고 메인 화면으로 이동한다."""
+    st.session_state.current_profile = name
+    st.session_state.pop("pending_profile", None)
+    st.session_state.pending_new_profile = False
+    st.rerun()
 
-    닉네임은 URL 쿼리 파라미터(?user=이름)에 저장되므로, 각자 "이름이 담긴 링크"를
-    홈 화면에 추가(북마크)해 두면 매번 다시 입력할 필요 없이 자기 기록으로 바로 들어온다.
-    """
-    raw = st.query_params.get("user", "")
-    username = sanitize_username(raw)
 
-    if not username:
-        st.title("💪 Fitness Agent")
-        st.subheader("누구신가요?")
-        st.caption(
-            "여러 명이 같은 앱을 함께 쓰기 때문에, 기록이 섞이지 않도록 닉네임을 알려주세요. "
-            "이후 이 화면의 링크를 홈 화면에 추가해 두면 다음부터는 자동으로 로그인됩니다."
-        )
-        with st.form("user_gate_form"):
-            name_input = st.text_input("닉네임 (예: 철수)", max_chars=30)
-            submitted = st.form_submit_button("시작하기", type="primary")
-        if submitted:
-            clean = sanitize_username(name_input)
-            if not clean:
-                st.error("한글·영문·숫자로 닉네임을 입력해 주세요.")
+def _render_pin_entry(name: str) -> None:
+    st.subheader(f"👤 {name}")
+    if profile_has_pin(name):
+        st.caption("4자리 PIN을 입력해 주세요.")
+        with st.form(f"pin_form_{name}"):
+            pin = st.text_input("PIN", max_chars=4, type="password", key=f"pin_input_{name}")
+            col_ok, col_back = st.columns(2)
+            ok = col_ok.form_submit_button("확인", type="primary", use_container_width=True)
+            back = col_back.form_submit_button("뒤로", use_container_width=True)
+        if back:
+            st.session_state.pop("pending_profile", None)
+            st.rerun()
+        if ok:
+            if verify_profile_pin(name, pin):
+                _profile_login(name)
             else:
-                st.query_params["user"] = clean
-                st.rerun()
-        st.stop()
+                st.error("PIN이 올바르지 않습니다.")
+    else:
+        st.caption("이 프로필은 아직 PIN이 없습니다. 사용할 4자리 PIN을 새로 설정해 주세요.")
+        with st.form(f"setpin_form_{name}"):
+            pin1 = st.text_input("새 PIN (숫자 4자리)", max_chars=4, type="password", key=f"newpin1_{name}")
+            pin2 = st.text_input("PIN 확인", max_chars=4, type="password", key=f"newpin2_{name}")
+            col_ok, col_back = st.columns(2)
+            ok = col_ok.form_submit_button("설정하고 시작하기", type="primary", use_container_width=True)
+            back = col_back.form_submit_button("뒤로", use_container_width=True)
+        if back:
+            st.session_state.pop("pending_profile", None)
+            st.rerun()
+        if ok:
+            if pin1 != pin2:
+                st.error("PIN이 서로 다릅니다.")
+            elif not pin1.isdigit() or len(pin1) != 4:
+                st.error("PIN은 숫자 4자리로 입력해 주세요.")
+            else:
+                set_profile_pin(name, pin1)
+                _profile_login(name)
 
-    set_current_user(username)
-    return username
+
+def _render_new_profile_form() -> None:
+    st.subheader("➕ 새 프로필 추가")
+    with st.form("new_profile_form"):
+        name_input = st.text_input("닉네임 (예: 철수)", max_chars=30)
+        pin1 = st.text_input("PIN (숫자 4자리)", max_chars=4, type="password")
+        pin2 = st.text_input("PIN 확인", max_chars=4, type="password")
+        col_ok, col_back = st.columns(2)
+        ok = col_ok.form_submit_button("만들기", type="primary", use_container_width=True)
+        back = col_back.form_submit_button("뒤로", use_container_width=True)
+    if back:
+        st.session_state.pending_new_profile = False
+        st.rerun()
+    if ok:
+        clean = sanitize_username(name_input)
+        if not clean:
+            st.error("한글·영문·숫자로 닉네임을 입력해 주세요.")
+        elif pin1 != pin2:
+            st.error("PIN이 서로 다릅니다.")
+        elif not pin1.isdigit() or len(pin1) != 4:
+            st.error("PIN은 숫자 4자리로 입력해 주세요.")
+        else:
+            try:
+                create_profile(clean, pin1)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                _profile_login(clean)
+
+
+def _render_profile_picker() -> None:
+    st.title("💪 Fitness Agent")
+
+    pending = st.session_state.get("pending_profile")
+    if pending:
+        _render_pin_entry(pending)
+        return
+    if st.session_state.get("pending_new_profile"):
+        _render_new_profile_form()
+        return
+
+    st.subheader("누구신가요?")
+    st.caption("여러 명이 같은 앱을 함께 쓰기 때문에, 프로필을 선택하고 PIN을 입력해 주세요.")
+
+    profiles = list_profiles()
+    if profiles:
+        cols_per_row = 4
+        for row_start in range(0, len(profiles), cols_per_row):
+            row = profiles[row_start : row_start + cols_per_row]
+            cols = st.columns(cols_per_row)
+            for name, col in zip(row, cols, strict=False):
+                with col:
+                    if st.button(f"👤 {name}", key=f"profile_btn_{name}", use_container_width=True):
+                        st.session_state.pending_profile = name
+                        st.rerun()
+    else:
+        st.caption("아직 등록된 프로필이 없습니다. 아래에서 새로 만들어 주세요.")
+
+    st.divider()
+    if st.button("➕ 새 프로필 추가", use_container_width=True):
+        st.session_state.pending_new_profile = True
+        st.rerun()
+
+
+def ensure_current_user() -> str:
+    """여러 사람이 같은 배포본을 함께 쓸 때 기록이 섞이지 않도록, 넷플릭스 프로필처럼
+    닉네임을 고르고 PIN으로 확인한다. 프로필 선택은 세션(브라우저 탭)마다 유지된다."""
+    current = st.session_state.get("current_profile")
+    if current:
+        set_current_user(current)
+        return current
+
+    _render_profile_picker()
+    st.stop()
 
 
 def render_body_field_manager() -> None:
@@ -1568,7 +1664,7 @@ def main() -> None:
     with st.sidebar:
         st.markdown(f"👤 **{current_user}** 님")
         if st.button("다른 사람으로 전환", key="switch_user_btn", use_container_width=True):
-            del st.query_params["user"]
+            st.session_state.pop("current_profile", None)
             st.rerun()
         st.divider()
 

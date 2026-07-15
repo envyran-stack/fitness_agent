@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -44,6 +45,83 @@ def set_current_user(username: str | None) -> None:
 
 def get_current_user() -> str | None:
     return getattr(_user_context, "username", None)
+
+
+def _hash_pin(pin: str) -> str:
+    return hashlib.sha256(pin.encode("utf-8")).hexdigest()
+
+
+def _profile_path(username: str) -> Path:
+    return USERS_DIR / f"{sanitize_username(username)}.json"
+
+
+def list_profiles() -> list[str]:
+    """지금까지 만들어진 프로필(닉네임) 목록을 반환한다 (프로필 선택 화면용)."""
+    if not USERS_DIR.exists():
+        return []
+    return sorted(p.stem for p in USERS_DIR.glob("*.json"))
+
+
+def profile_exists(username: str) -> bool:
+    return _profile_path(username).exists()
+
+
+def _read_profile_raw(username: str) -> dict[str, Any] | None:
+    path = _profile_path(username)
+    if not path.exists():
+        return None
+    with path.open(encoding="utf-8") as f:
+        return json.load(f)
+
+
+def profile_has_pin(username: str) -> bool:
+    data = _read_profile_raw(username)
+    return bool(data and data.get("pin_hash"))
+
+
+def verify_profile_pin(username: str, pin: str) -> bool:
+    data = _read_profile_raw(username)
+    if not data or not data.get("pin_hash"):
+        return False
+    return data["pin_hash"] == _hash_pin(pin)
+
+
+def create_profile(username: str, pin: str) -> str:
+    """PIN과 함께 새 프로필을 만든다. storage의 사용자 컨텍스트(스레드 로컬)와는
+    무관하게 파일을 직접 다뤄서, 로그인 이전(현재 사용자 미지정) 상태에서도 안전하게 동작한다."""
+    clean = sanitize_username(username)
+    if not clean:
+        raise ValueError("닉네임을 입력해 주세요.")
+    if not (pin or "").isdigit() or len(pin) != 4:
+        raise ValueError("PIN은 숫자 4자리로 입력해 주세요.")
+    path = _profile_path(clean)
+    if path.exists():
+        raise ValueError("이미 있는 닉네임입니다. 다른 닉네임을 입력해 주세요.")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "body_metric_fields": [dict(field) for field in DEFAULT_BODY_METRIC_FIELDS],
+        "body_metrics": [],
+        "workouts": [],
+        "events": [],
+        "pin_hash": _hash_pin(pin),
+    }
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return clean
+
+
+def set_profile_pin(username: str, pin: str) -> None:
+    """기존 프로필(과거에 PIN 없이 만들어진 경우 포함)에 PIN을 설정/변경한다."""
+    if not (pin or "").isdigit() or len(pin) != 4:
+        raise ValueError("PIN은 숫자 4자리로 입력해 주세요.")
+    path = _profile_path(username)
+    if not path.exists():
+        raise ValueError("존재하지 않는 프로필입니다.")
+    with path.open(encoding="utf-8") as f:
+        data = json.load(f)
+    data["pin_hash"] = _hash_pin(pin)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def _current_data_file() -> Path:
