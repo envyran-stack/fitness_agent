@@ -79,6 +79,7 @@ def _load_cloud_secrets() -> None:
             "SMTP_HOST",
             "SMTP_PORT",
             "REPORT_EMAIL",
+            "ADMIN_PASSWORD",
         ):
             if key in secrets and not os.getenv(key):
                 os.environ[key] = str(secrets[key])
@@ -230,39 +231,54 @@ def _render_delete_confirm(name: str) -> None:
     st.subheader(f"🗑 '{name}' 프로필 삭제")
     st.warning("삭제하면 이 프로필의 신체·운동·이벤트 기록이 전부 사라지고 되돌릴 수 없습니다.")
 
+    deleted = False
+
     if profile_has_pin(name):
         with st.form(f"delete_form_{name}"):
             pin = st.text_input("PIN 확인", max_chars=4, type="password", key=f"del_pin_{name}")
-            col_ok, col_back = st.columns(2)
-            confirm = col_ok.form_submit_button("삭제", type="primary", use_container_width=True)
-            cancel = col_back.form_submit_button("취소", use_container_width=True)
-        if cancel:
-            st.session_state.pop("pending_delete_profile", None)
-            st.rerun()
+            confirm = st.form_submit_button("삭제", type="primary", use_container_width=True)
         if confirm:
             if verify_profile_pin(name, pin):
-                delete_profile(name)
-                st.session_state.pop("pending_delete_profile", None)
-                st.rerun()
+                deleted = True
             else:
                 st.error("PIN이 올바르지 않습니다.")
     else:
         st.caption("이 프로필에는 PIN이 없어서, 확인을 위해 닉네임을 다시 입력해 주세요.")
         with st.form(f"delete_form_nopin_{name}"):
             typed = st.text_input("닉네임 다시 입력", key=f"del_typed_{name}")
-            col_ok, col_back = st.columns(2)
-            confirm = col_ok.form_submit_button("삭제", type="primary", use_container_width=True)
-            cancel = col_back.form_submit_button("취소", use_container_width=True)
-        if cancel:
-            st.session_state.pop("pending_delete_profile", None)
-            st.rerun()
+            confirm = st.form_submit_button("삭제", type="primary", use_container_width=True)
         if confirm:
             if sanitize_username(typed) == name:
-                delete_profile(name)
-                st.session_state.pop("pending_delete_profile", None)
-                st.rerun()
+                deleted = True
             else:
                 st.error("닉네임이 일치하지 않습니다.")
+
+    # PIN을 모르는 지인이 프로필을 만들어두고 연락이 끊겼을 때를 위해, 앱 관리자만
+    # 아는 별도 비밀번호로 PIN 확인 없이 강제 삭제할 수 있는 통로를 열어둔다.
+    # ADMIN_PASSWORD가 설정돼 있지 않으면 이 통로 자체가 보이지 않는다.
+    admin_password = os.getenv("ADMIN_PASSWORD")
+    if not deleted and admin_password:
+        with st.expander("🔑 PIN을 모를 때 — 관리자 비밀번호로 강제 삭제"):
+            with st.form(f"admin_delete_form_{name}"):
+                admin_input = st.text_input("관리자 비밀번호", type="password", key=f"admin_pw_{name}")
+                admin_confirm = st.form_submit_button(
+                    "관리자 권한으로 삭제", type="primary", use_container_width=True
+                )
+            if admin_confirm:
+                if admin_input == admin_password:
+                    deleted = True
+                else:
+                    st.error("관리자 비밀번호가 올바르지 않습니다.")
+
+    if deleted:
+        delete_profile(name)
+        st.session_state.pop("pending_delete_profile", None)
+        st.success(f"'{name}' 프로필을 삭제했습니다.")
+        st.rerun()
+
+    if st.button("취소", key=f"cancel_delete_{name}"):
+        st.session_state.pop("pending_delete_profile", None)
+        st.rerun()
 
 
 def _render_new_profile_form() -> None:
