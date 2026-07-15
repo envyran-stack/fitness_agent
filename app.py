@@ -37,6 +37,7 @@ from storage import (
     delete_workout,
     get_body_metric_fields,
     create_profile,
+    delete_profile,
     get_events,
     get_records_filtered,
     list_profiles,
@@ -225,6 +226,45 @@ def _render_pin_entry(name: str) -> None:
                 _profile_login(name)
 
 
+def _render_delete_confirm(name: str) -> None:
+    st.subheader(f"🗑 '{name}' 프로필 삭제")
+    st.warning("삭제하면 이 프로필의 신체·운동·이벤트 기록이 전부 사라지고 되돌릴 수 없습니다.")
+
+    if profile_has_pin(name):
+        with st.form(f"delete_form_{name}"):
+            pin = st.text_input("PIN 확인", max_chars=4, type="password", key=f"del_pin_{name}")
+            col_ok, col_back = st.columns(2)
+            confirm = col_ok.form_submit_button("삭제", type="primary", use_container_width=True)
+            cancel = col_back.form_submit_button("취소", use_container_width=True)
+        if cancel:
+            st.session_state.pop("pending_delete_profile", None)
+            st.rerun()
+        if confirm:
+            if verify_profile_pin(name, pin):
+                delete_profile(name)
+                st.session_state.pop("pending_delete_profile", None)
+                st.rerun()
+            else:
+                st.error("PIN이 올바르지 않습니다.")
+    else:
+        st.caption("이 프로필에는 PIN이 없어서, 확인을 위해 닉네임을 다시 입력해 주세요.")
+        with st.form(f"delete_form_nopin_{name}"):
+            typed = st.text_input("닉네임 다시 입력", key=f"del_typed_{name}")
+            col_ok, col_back = st.columns(2)
+            confirm = col_ok.form_submit_button("삭제", type="primary", use_container_width=True)
+            cancel = col_back.form_submit_button("취소", use_container_width=True)
+        if cancel:
+            st.session_state.pop("pending_delete_profile", None)
+            st.rerun()
+        if confirm:
+            if sanitize_username(typed) == name:
+                delete_profile(name)
+                st.session_state.pop("pending_delete_profile", None)
+                st.rerun()
+            else:
+                st.error("닉네임이 일치하지 않습니다.")
+
+
 def _render_new_profile_form() -> None:
     st.subheader("➕ 새 프로필 추가")
     with st.form("new_profile_form"):
@@ -257,6 +297,10 @@ def _render_new_profile_form() -> None:
 def _render_profile_picker() -> None:
     st.title("💪 Fitness Agent")
 
+    pending_delete = st.session_state.get("pending_delete_profile")
+    if pending_delete:
+        _render_delete_confirm(pending_delete)
+        return
     pending = st.session_state.get("pending_profile")
     if pending:
         _render_pin_entry(pending)
@@ -266,7 +310,10 @@ def _render_profile_picker() -> None:
         return
 
     st.subheader("누구신가요?")
-    st.caption("여러 명이 같은 앱을 함께 쓰기 때문에, 프로필을 선택하고 PIN을 입력해 주세요.")
+    st.caption(
+        "여러 명이 같은 앱을 함께 쓰기 때문에, 프로필을 선택하고 PIN을 입력해 주세요. "
+        "(🗑 로 필요 없는 프로필을 지울 수 있어요.)"
+    )
 
     profiles = list_profiles()
     if profiles:
@@ -276,9 +323,15 @@ def _render_profile_picker() -> None:
             cols = st.columns(cols_per_row)
             for name, col in zip(row, cols, strict=False):
                 with col:
-                    if st.button(f"👤 {name}", key=f"profile_btn_{name}", use_container_width=True):
-                        st.session_state.pending_profile = name
-                        st.rerun()
+                    sub_main, sub_del = st.columns([4, 1])
+                    with sub_main:
+                        if st.button(f"👤 {name}", key=f"profile_btn_{name}", use_container_width=True):
+                            st.session_state.pending_profile = name
+                            st.rerun()
+                    with sub_del:
+                        if st.button("🗑", key=f"del_btn_{name}", use_container_width=True, help=f"'{name}' 프로필 삭제"):
+                            st.session_state.pending_delete_profile = name
+                            st.rerun()
     else:
         st.caption("아직 등록된 프로필이 없습니다. 아래에서 새로 만들어 주세요.")
 

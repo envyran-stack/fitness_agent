@@ -110,6 +110,13 @@ def create_profile(username: str, pin: str) -> str:
     return clean
 
 
+def delete_profile(username: str) -> None:
+    """프로필(닉네임)과 그 사람의 모든 기록을 영구적으로 삭제한다."""
+    path = _profile_path(username)
+    if path.exists():
+        path.unlink()
+
+
 def set_profile_pin(username: str, pin: str) -> None:
     """기존 프로필(과거에 PIN 없이 만들어진 경우 포함)에 PIN을 설정/변경한다."""
     if not (pin or "").isdigit() or len(pin) != 4:
