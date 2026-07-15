@@ -6,6 +6,8 @@ import os
 import smtplib
 from email.mime.text import MIMEText
 
+from storage import get_report_email
+
 GMAIL_APP_PASSWORD_LEN = 16
 GMAIL_APP_PASSWORD_URL = "https://myaccount.google.com/apppasswords"
 
@@ -39,15 +41,39 @@ def smtp_settings() -> tuple[str, int, str, str]:
     return smtp_host, smtp_port, smtp_user, smtp_password
 
 
+def _is_placeholder_email(email: str) -> bool:
+    lowered = email.strip().lower()
+    if not lowered:
+        return True
+    if lowered in BLOCKED_RECIPIENT_EMAILS:
+        return True
+    if "@example." in lowered or lowered.endswith("example.com"):
+        return True
+    if lowered.startswith("your@") or "placeholder" in lowered:
+        return True
+    return False
+
+
 def default_report_recipient() -> str:
-    """REPORT_EMAIL → SMTP_USER 순으로 기본 수신 주소 반환."""
+    """현재 프로필에 저장된 이메일 → REPORT_EMAIL → SMTP_USER 순으로 기본 수신 주소 반환.
+
+    같은 배포본을 여러 명이 함께 쓰므로, 각자 프로필에 자기 이메일을 저장해두면
+    그 사람이 리포트를 요청할 때 (다른 지인이 아니라) 자기 메일로 발송된다.
+    """
+    try:
+        profile_email = get_report_email()
+    except Exception:
+        profile_email = ""
+    if profile_email and not _is_placeholder_email(profile_email):
+        return profile_email
+
     _, _, smtp_user, _ = smtp_settings()
     return os.getenv("REPORT_EMAIL", smtp_user).strip() or smtp_user
 
 
 def resolve_report_recipient(to_email: str | None) -> str:
     """
-    수신 이메일 결정. 빈 값·placeholder·example 도메인은 .env 기본 주소 사용.
+    수신 이메일 결정. 빈 값·placeholder·example 도메인은 기본 주소(프로필 이메일 등) 사용.
     사용자가 채팅에서 명시한 실제 주소만 허용.
     """
     default = default_report_recipient()
@@ -55,13 +81,7 @@ def resolve_report_recipient(to_email: str | None) -> str:
         return default
 
     candidate = str(to_email).strip()
-    lowered = candidate.lower()
-
-    if lowered in BLOCKED_RECIPIENT_EMAILS:
-        return default
-    if "@example." in lowered or lowered.endswith("example.com"):
-        return default
-    if lowered.startswith("your@") or "placeholder" in lowered:
+    if _is_placeholder_email(candidate):
         return default
 
     return candidate

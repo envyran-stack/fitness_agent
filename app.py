@@ -40,6 +40,7 @@ from storage import (
     delete_profile,
     get_events,
     get_records_filtered,
+    get_report_email,
     list_profiles,
     load_data,
     parse_date,
@@ -48,6 +49,7 @@ from storage import (
     sanitize_username,
     set_current_user,
     set_profile_pin,
+    set_report_email,
     update_body_metric,
     update_event,
     update_workout,
@@ -1748,6 +1750,19 @@ def main() -> None:
             st.caption(f"리포트 수신: {default_report_recipient()}")
         else:
             st.error(str(mail_status["summary"]))
+
+        with st.form("my_report_email_form"):
+            my_email = st.text_input(
+                "내 리포트 이메일 (선택)",
+                value=get_report_email(),
+                placeholder="예: chulsoo@gmail.com",
+                help="입력해 두면 '메일로 보내줘'라고 했을 때 공용 주소 대신 이 메일로 발송됩니다.",
+            )
+            saved = st.form_submit_button("저장", use_container_width=True)
+        if saved:
+            set_report_email(my_email)
+            st.rerun()
+
         with st.expander("Gmail 앱 비밀번호 설정"):
             st.markdown(
                 "1. [Google 보안](https://myaccount.google.com/security) → **2단계 인증** 켜기\n"

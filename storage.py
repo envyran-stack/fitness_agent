@@ -22,6 +22,7 @@ DEFAULT_DATA: dict[str, Any] = {
     "body_metrics": [],
     "workouts": [],
     "events": [],
+    "report_email": "",
 }
 
 # 여러 사람이 같은 서버에 동시 접속해도 기록이 섞이지 않도록, "현재 사용자"를
@@ -104,6 +105,7 @@ def create_profile(username: str, pin: str) -> str:
         "body_metrics": [],
         "workouts": [],
         "events": [],
+        "report_email": "",
         "pin_hash": _hash_pin(pin),
     }
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -254,6 +256,19 @@ def save_data(data: dict[str, Any]) -> None:
     _ensure_data_file()
     with _current_data_file().open("w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def get_report_email() -> str:
+    """현재 로그인한 프로필에 저장된 리포트 수신 이메일(없으면 빈 문자열)."""
+    data = load_data()
+    return str(data.get("report_email") or "").strip()
+
+
+def set_report_email(email: str) -> None:
+    """현재 로그인한 프로필의 리포트 수신 이메일을 저장한다."""
+    data = load_data()
+    data["report_email"] = (email or "").strip()
+    save_data(data)
 
 
 def today_str() -> str:
